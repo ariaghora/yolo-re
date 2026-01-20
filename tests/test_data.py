@@ -11,6 +11,7 @@ from yolo.data import (
     HSV,
     Albumentations,
     AugmentConfig,
+    CacheMode,
     Compose,
     DataConfig,
     Letterbox,
@@ -296,3 +297,178 @@ class TestDataConfig:
         config = DataConfig(train_path="/path/to/train", val_path="/path/to/val")
         assert isinstance(config.train_path, Path)
         assert isinstance(config.val_path, Path)
+
+    def test_cache_mode_default(self):
+        """Test CacheMode default is NONE."""
+        config = DataConfig(train_path="/path/to/train")
+        assert config.cache == CacheMode.NONE
+
+    def test_augment_config_defaults_match_reference(self):
+        """Test augmentation defaults match reference YOLOv9."""
+        aug = AugmentConfig()
+        assert aug.scale == 0.9  # Reference default
+        assert aug.mixup == 0.15  # Reference default
+
+
+class TestCacheMode:
+    """Tests for CacheMode enum and caching behavior."""
+
+    def test_cache_mode_values(self):
+        """Test CacheMode enum values."""
+        assert CacheMode.NONE.value == "none"
+        assert CacheMode.RAM.value == "ram"
+        assert CacheMode.DISK.value == "disk"
+
+    def test_ram_caching(self):
+        """Test RAM caching loads images into memory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_dir = Path(tmpdir) / "images" / "train"
+            img_dir.mkdir(parents=True)
+
+            img = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "test.jpg"), img)
+
+            dataset = YOLODataset(img_dir, img_size=640, cache=CacheMode.RAM)
+
+            # Image should be cached in RAM
+            assert dataset.imgs[0] is not None
+            assert dataset.imgs[0].shape == (480, 640, 3)
+
+    def test_disk_caching(self):
+        """Test disk caching creates .npy files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_dir = Path(tmpdir) / "images" / "train"
+            img_dir.mkdir(parents=True)
+
+            img = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "test.jpg"), img)
+
+            YOLODataset(img_dir, img_size=640, cache=CacheMode.DISK)
+
+            # .npy file should exist
+            npy_file = img_dir / "test.npy"
+            assert npy_file.exists()
+
+            # Should be able to load from .npy
+            cached_img = np.load(npy_file)
+            assert cached_img.shape[2] == 3  # Should be resized image
+
+    def test_no_caching(self):
+        """Test no caching leaves imgs list as None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_dir = Path(tmpdir) / "images" / "train"
+            img_dir.mkdir(parents=True)
+
+            img = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "test.jpg"), img)
+
+            dataset = YOLODataset(img_dir, img_size=640, cache=CacheMode.NONE)
+
+            # Image should not be cached
+            assert dataset.imgs[0] is None
+
+
+class TestRectTraining:
+    """Tests for rectangular training."""
+
+    def test_rect_sorts_by_aspect_ratio(self):
+        """Test rect training sorts images by aspect ratio."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_dir = Path(tmpdir) / "images" / "train"
+            label_dir = Path(tmpdir) / "labels" / "train"
+            img_dir.mkdir(parents=True)
+            label_dir.mkdir(parents=True)
+
+            # Create images with different aspect ratios
+            # Wide image (ar < 1)
+            wide_img = np.random.randint(0, 256, (300, 600, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "wide.jpg"), wide_img)
+            with open(label_dir / "wide.txt", "w") as f:
+                f.write("0 0.5 0.5 0.1 0.1\n")
+
+            # Tall image (ar > 1)
+            tall_img = np.random.randint(0, 256, (600, 300, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "tall.jpg"), tall_img)
+            with open(label_dir / "tall.txt", "w") as f:
+                f.write("0 0.5 0.5 0.1 0.1\n")
+
+            # Square image (ar = 1)
+            square_img = np.random.randint(0, 256, (400, 400, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "square.jpg"), square_img)
+            with open(label_dir / "square.txt", "w") as f:
+                f.write("0 0.5 0.5 0.1 0.1\n")
+
+            dataset = YOLODataset(
+                img_dir, img_size=640, rect=True, batch_size=3, stride=32
+            )
+
+            # Should be sorted by aspect ratio (h/w)
+            # wide (0.5) < square (1.0) < tall (2.0)
+            assert "wide" in str(dataset.im_files[0])
+            assert "square" in str(dataset.im_files[1])
+            assert "tall" in str(dataset.im_files[2])
+
+    def test_rect_computes_batch_shapes(self):
+        """Test rect training computes batch shapes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_dir = Path(tmpdir) / "images" / "train"
+            img_dir.mkdir(parents=True)
+
+            # Create a few images
+            for i in range(4):
+                img = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+                cv2.imwrite(str(img_dir / f"img{i}.jpg"), img)
+
+            dataset = YOLODataset(
+                img_dir, img_size=640, rect=True, batch_size=2, stride=32
+            )
+
+            assert dataset.batch is not None
+            assert dataset.batch_shapes is not None
+            assert len(dataset.batch_shapes) == 2  # 4 images / batch_size 2 = 2 batches
+
+    def test_rect_disabled_by_default(self):
+        """Test rect training is disabled by default."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_dir = Path(tmpdir) / "images" / "train"
+            img_dir.mkdir(parents=True)
+
+            img = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "test.jpg"), img)
+
+            dataset = YOLODataset(img_dir, img_size=640)
+
+            assert dataset.batch is None
+            assert dataset.batch_shapes is None
+
+
+class TestWorkerSeeding:
+    """Tests for worker seeding and reproducibility."""
+
+    def test_seed_worker_function_exists(self):
+        """Test seed_worker function is importable."""
+        from yolo.data.dataset import seed_worker
+
+        # Should be callable
+        assert callable(seed_worker)
+
+    def test_create_dataloader_uses_generator(self):
+        """Test create_dataloader sets up generator for reproducibility."""
+        from yolo.data.dataset import create_dataloader
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img_dir = Path(tmpdir) / "images" / "train"
+            label_dir = Path(tmpdir) / "labels" / "train"
+            img_dir.mkdir(parents=True)
+            label_dir.mkdir(parents=True)
+
+            img = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+            cv2.imwrite(str(img_dir / "test.jpg"), img)
+            with open(label_dir / "test.txt", "w") as f:
+                f.write("0 0.5 0.5 0.2 0.2\n")
+
+            config = DataConfig(train_path=img_dir, batch_size=1, workers=0)
+            dataloader = create_dataloader(config, train=True)
+
+            # DataLoader should have worker_init_fn set
+            assert dataloader.worker_init_fn is not None

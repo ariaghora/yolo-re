@@ -360,10 +360,10 @@ class Albumentations(Transform):
 def default_train_transforms(
     dataset: YOLODataset,
     mosaic: float = 1.0,
-    mixup: float = 0.0,
+    mixup: float = 0.15,
     degrees: float = 0.0,
     translate: float = 0.1,
-    scale: float = 0.5,
+    scale: float = 0.9,
     shear: float = 0.0,
     perspective: float = 0.0,
     hsv_h: float = 0.015,

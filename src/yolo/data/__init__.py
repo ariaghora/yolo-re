@@ -7,7 +7,7 @@ from yolo.data.augment import (
     xywhn2xyxy,
     xyxy2xywhn,
 )
-from yolo.data.config import AugmentConfig, DataConfig
+from yolo.data.config import AugmentConfig, CacheMode, DataConfig
 from yolo.data.dataset import YOLODataset, collate_fn, create_dataloader
 from yolo.data.transforms import (
     HSV,
@@ -28,6 +28,7 @@ from yolo.data.transforms import (
 __all__ = [
     # Config
     "AugmentConfig",
+    "CacheMode",
     "DataConfig",
     # Dataset
     "YOLODataset",

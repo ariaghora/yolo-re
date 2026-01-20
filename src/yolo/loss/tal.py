@@ -171,6 +171,13 @@ class TALoss(nn.Module):
         target_bboxes /= stride_tensor
         target_scores_sum = max(target_scores.sum(), 1)
 
+        # Apply label smoothing
+        if self.config.label_smoothing > 0:
+            target_scores = (
+                target_scores * (1 - self.config.label_smoothing)
+                + self.config.label_smoothing / self.num_classes
+            )
+
         loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum
 
         if fg_mask.sum():
@@ -247,6 +254,17 @@ class TALoss(nn.Module):
         target_scores_sum_aux = max(target_scores_aux.sum(), 1)
         target_bboxes_main /= stride_tensor
         target_scores_sum_main = max(target_scores_main.sum(), 1)
+
+        # Apply label smoothing
+        if self.config.label_smoothing > 0:
+            target_scores_aux = (
+                target_scores_aux * (1 - self.config.label_smoothing)
+                + self.config.label_smoothing / self.num_classes
+            )
+            target_scores_main = (
+                target_scores_main * (1 - self.config.label_smoothing)
+                + self.config.label_smoothing / self.num_classes
+            )
 
         cls_loss_aux = self.bce(pred_scores_aux, target_scores_aux.to(dtype)).sum()
         cls_loss_main = self.bce(pred_scores_main, target_scores_main.to(dtype)).sum()

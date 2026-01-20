@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from yolo.loss.iou import bbox_iou
+from yolo.loss.iou import IoUType, bbox_iou
 
 
 def select_candidates_in_gts(xy_centers: Tensor, gt_bboxes: Tensor, eps: float = 1e-9) -> Tensor:
@@ -175,7 +175,9 @@ class TaskAlignedAssigner(nn.Module):
         bbox_scores = pd_scores[ind[0], :, ind[1]]
 
         overlaps = (
-            bbox_iou(gt_bboxes.unsqueeze(2), pd_bboxes.unsqueeze(1), xywh=False, CIoU=True)
+            bbox_iou(
+                gt_bboxes.unsqueeze(2), pd_bboxes.unsqueeze(1), xywh=False, iou_type=IoUType.CIOU
+            )
             .squeeze(3)
             .clamp(0)
         )

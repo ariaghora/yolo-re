@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,11 +11,19 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
-from yolo.data.config import DataConfig
+from yolo.data.config import CacheMode, DataConfig
 
 if TYPE_CHECKING:
     from yolo.data.transforms import Compose
+
+
+def seed_worker(worker_id: int) -> None:
+    """Set worker seed for reproducibility."""
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
@@ -34,7 +43,11 @@ class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
         path: Path | str,
         img_size: int = 640,
         transforms: Compose | None = None,
-        cache_images: bool = False,
+        cache: CacheMode = CacheMode.NONE,
+        rect: bool = False,
+        batch_size: int = 16,
+        stride: int = 32,
+        pad: float = 0.0,
     ):
         """Initialize dataset.
 
@@ -42,22 +55,42 @@ class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
             path: Path to images directory or .txt file with image paths
             img_size: Target image size
             transforms: Transform pipeline to apply
-            cache_images: Cache images in RAM for faster training
+            cache: Caching strategy (NONE, RAM, or DISK)
+            rect: Use rectangular training (variable batch shapes by aspect ratio)
+            batch_size: Batch size (needed for rect training)
+            stride: Stride for shape alignment in rect training
+            pad: Padding factor for rect training
         """
         self.path = Path(path)
         self.img_size = img_size
         self.transforms = transforms
+        self.cache = cache
+        self.rect = rect
+        self.stride = stride
 
         self.im_files = self._get_image_files()
         self.label_files = self._img2label_paths(self.im_files)
+        self.npy_files = [f.with_suffix(".npy") for f in self.im_files]
         self.labels = self._load_labels()
 
         self.n = len(self.im_files)
         self.indices = list(range(self.n))
 
+        # Load image shapes for rect training
+        self.shapes = self._load_shapes()
+
+        # Setup rect training (sort by aspect ratio)
+        self.batch: np.ndarray | None = None
+        self.batch_shapes: np.ndarray | None = None
+        if rect:
+            self._setup_rect(batch_size, pad)
+
+        # Initialize image cache
         self.imgs: list[np.ndarray | None] = [None] * self.n
-        if cache_images:
-            self._cache_images()
+        if cache == CacheMode.DISK:
+            self._cache_images_to_disk()
+        elif cache == CacheMode.RAM:
+            self._cache_images_to_ram()
 
     def _get_image_files(self) -> list[Path]:
         """Get list of image files."""
@@ -98,10 +131,72 @@ class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
             labels.append(lb)
         return labels
 
-    def _cache_images(self) -> None:
+    def _load_shapes(self) -> np.ndarray:
+        """Load image shapes (h, w) for all images."""
+        shapes = []
+        for f in self.im_files:
+            img = cv2.imread(str(f))
+            if img is not None:
+                shapes.append(img.shape[:2])
+            else:
+                shapes.append((self.img_size, self.img_size))
+        return np.array(shapes)
+
+    def _setup_rect(self, batch_size: int, pad: float) -> None:
+        """Setup rectangular training by sorting images by aspect ratio."""
+        # Sort by aspect ratio
+        ar = self.shapes[:, 0] / self.shapes[:, 1]  # h/w
+        irect = ar.argsort()
+
+        # Reorder everything by aspect ratio
+        self.im_files = [self.im_files[i] for i in irect]
+        self.label_files = [self.label_files[i] for i in irect]
+        self.npy_files = [self.npy_files[i] for i in irect]
+        self.labels = [self.labels[i] for i in irect]
+        self.shapes = self.shapes[irect]
+        ar = ar[irect]
+
+        # Compute batch indices and shapes
+        bi = np.floor(np.arange(self.n) / batch_size).astype(int)
+        nb = bi[-1] + 1 if self.n > 0 else 0
+        self.batch = bi
+
+        # Compute batch shapes
+        self.batch_shapes = np.zeros((nb, 2), dtype=np.float64)
+        for i in range(nb):
+            ari = ar[bi == i]
+            mini, maxi = ari.min(), ari.max()
+            if maxi < 1:
+                self.batch_shapes[i] = [maxi, 1]
+            elif mini > 1:
+                self.batch_shapes[i] = [1, 1 / mini]
+            else:
+                self.batch_shapes[i] = [1, 1]
+
+        self.batch_shapes = (
+            np.ceil(self.batch_shapes * self.img_size / self.stride + pad).astype(int) * self.stride
+        )
+
+    def _cache_images_to_ram(self) -> None:
         """Cache images in RAM."""
-        for i in range(self.n):
+        desc = f"Caching images to RAM ({self.path.name})"
+        for i in tqdm(range(self.n), desc=desc):
             self.imgs[i] = cv2.imread(str(self.im_files[i]))
+
+    def _cache_images_to_disk(self) -> None:
+        """Cache resized images as .npy files."""
+        desc = f"Caching images to disk ({self.path.name})"
+        for i in tqdm(range(self.n), desc=desc):
+            npy = self.npy_files[i]
+            if not npy.exists():
+                img = cv2.imread(str(self.im_files[i]))
+                if img is not None:
+                    h0, w0 = img.shape[:2]
+                    r = self.img_size / max(h0, w0)
+                    if r != 1:
+                        interp = cv2.INTER_LINEAR if r > 1 else cv2.INTER_AREA
+                        img = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=interp)
+                    np.save(npy, img)
 
     def __len__(self) -> int:
         return self.n
@@ -120,10 +215,15 @@ class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
         img, (h0, w0), _ = self._load_image(index)
         labels = self.labels[index].copy()
 
+        # Use batch shape for rect training
+        img_size = self.img_size
+        if self.rect and self.batch is not None and self.batch_shapes is not None:
+            img_size = tuple(self.batch_shapes[self.batch[index]])  # type: ignore[assignment]
+
         sample = Sample(
             img=img,
             labels=labels,
-            img_size=self.img_size,
+            img_size=img_size if isinstance(img_size, int) else img_size[0],
             original_shape=(h0, w0),
         )
 
@@ -141,12 +241,23 @@ class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
             (h0, w0): Original dimensions
             (h, w): Current dimensions
         """
+        # Check RAM cache first
         img = self.imgs[i]
+
         if img is None:
+            # Check disk cache
+            npy = self.npy_files[i]
+            if npy.exists():
+                img = np.load(npy)
+                h0, w0 = self.shapes[i]
+                return img, (h0, w0), img.shape[:2]
+
+            # Load from image file
             path = self.im_files[i]
             img = cv2.imread(str(path))
             if img is None:
                 raise FileNotFoundError(f"Image not found: {path}")
+
         h0, w0 = img.shape[:2]
         return img, (h0, w0), (h0, w0)
 
@@ -197,11 +308,17 @@ def create_dataloader(
     if path is None:
         raise ValueError("Path not specified in config")
 
+    # Rect training only for validation (must maintain order)
+    rect = config.rect and not train
+
     dataset = YOLODataset(
         path=path,
         img_size=config.img_size,
         transforms=None,  # Set after creation for dataset access
-        cache_images=config.cache_images,
+        cache=config.cache,
+        rect=rect,
+        batch_size=config.batch_size,
+        stride=config.stride,
     )
 
     if train:
@@ -226,12 +343,18 @@ def create_dataloader(
 
     dataset.transforms = transforms
 
+    # Worker seeding for reproducibility
+    generator = torch.Generator()
+    generator.manual_seed(6148914691236517205)
+
     return DataLoader(
         dataset,
         batch_size=config.batch_size,
-        shuffle=train,
+        shuffle=train and not rect,  # No shuffle for rect training
         num_workers=config.workers,
         pin_memory=True,
         collate_fn=collate_fn,
         drop_last=train,
+        worker_init_fn=seed_worker,
+        generator=generator,
     )

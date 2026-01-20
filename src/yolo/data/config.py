@@ -3,17 +3,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
+
+
+class CacheMode(Enum):
+    """Image caching strategy."""
+
+    NONE = "none"  # No caching, load from disk each time
+    RAM = "ram"  # Cache resized images in RAM
+    DISK = "disk"  # Cache resized images as .npy files
 
 
 @dataclass
 class AugmentConfig:
-    """Augmentation configuration."""
+    """Augmentation configuration.
+
+    Defaults match reference YOLOv9 hyp.scratch-high.yaml.
+    """
 
     # Mosaic
     mosaic: float = 1.0
     mosaic_scale: tuple[float, float] = (0.5, 1.5)
-    mixup: float = 0.0
+    mixup: float = 0.15  # Reference default
 
     # HSV
     hsv_h: float = 0.015
@@ -23,7 +35,7 @@ class AugmentConfig:
     # Geometric
     degrees: float = 0.0
     translate: float = 0.1
-    scale: float = 0.5
+    scale: float = 0.9  # Reference default
     shear: float = 0.0
     perspective: float = 0.0
 
@@ -49,9 +61,10 @@ class DataConfig:
     # Augmentation
     augment: AugmentConfig = field(default_factory=AugmentConfig)
 
-    # Caching
-    cache_images: bool = False
+    # Caching and rect training
+    cache: CacheMode = CacheMode.NONE
     rect: bool = False
+    stride: int = 32  # For rect training shape alignment
 
     def __post_init__(self) -> None:
         self.train_path = Path(self.train_path)
