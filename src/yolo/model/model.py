@@ -118,7 +118,7 @@ class YOLO(nn.Module):
         detect: DetectDFL | DualDetectDFL | None = None
         detect_name: str | None = None
         for name, layer in self.layers.items():
-            if isinstance(layer, (DetectDFL, DualDetectDFL)):
+            if isinstance(layer, DetectDFL | DualDetectDFL):
                 detect = layer
                 detect_name = name
                 break
