@@ -1,0 +1,249 @@
+# YOLOv9-C Model Configuration
+# Reference: _reference/yolov9/models/detect/yolov9-c.yaml
+#
+# YOLOv9-C adds a multi-level reversible auxiliary branch for training.
+# The auxiliary branch shares early layers with the main branch via CBLinear/CBFuse.
+
+model:
+  num_classes: 80
+  depth_multiplier: 1.0
+  width_multiplier: 1.0
+
+layers:
+  # ============ MAIN BACKBONE ============
+
+  # Silence placeholder for auxiliary branch input routing
+  - name: input_silence
+    type: Silence
+    from: input
+
+  # Stem
+  - name: stem1
+    type: Conv
+    out_channels: 64
+    kernel_size: 3
+    stride: 2
+
+  - name: stem2
+    type: Conv
+    out_channels: 128
+    kernel_size: 3
+    stride: 2
+
+  # Stage 1 (P2)
+  - name: stage1
+    type: RepNCSPELAN4
+    out_channels: 256
+    hidden_channels: 128
+    block_channels: 64
+    num_repeats: 1
+
+  # Downsample to P3
+  - name: down1
+    type: ADown
+    out_channels: 256
+
+  # Stage 2 (P3) - used by CBLinear
+  - name: stage2
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 256
+    block_channels: 128
+    num_repeats: 1
+
+  # Downsample to P4
+  - name: down2
+    type: ADown
+    out_channels: 512
+
+  # Stage 3 (P4) - used by CBLinear
+  - name: stage3
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # Downsample to P5
+  - name: down3
+    type: ADown
+    out_channels: 512
+
+  # Stage 4 (P5) - used by CBLinear
+  - name: stage4
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # ============ MAIN NECK (FPN + PAN) ============
+
+  # SPP
+  - name: spp
+    type: SPPELAN
+    out_channels: 512
+    hidden_channels: 256
+
+  # FPN: Top-down path
+  - name: up1
+    type: Upsample
+    scale_factor: 2
+
+  - name: concat1
+    type: Concat
+    from: [up1, stage3]
+
+  - name: fpn1
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  - name: up2
+    type: Upsample
+    scale_factor: 2
+
+  - name: concat2
+    type: Concat
+    from: [up2, stage2]
+
+  - name: fpn2
+    type: RepNCSPELAN4
+    out_channels: 256
+    hidden_channels: 256
+    block_channels: 128
+    num_repeats: 1
+
+  # PAN: Bottom-up path
+  - name: pan_down1
+    type: ADown
+    out_channels: 256
+
+  - name: concat3
+    type: Concat
+    from: [pan_down1, fpn1]
+
+  - name: pan1
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  - name: pan_down2
+    type: ADown
+    out_channels: 512
+
+  - name: concat4
+    type: Concat
+    from: [pan_down2, spp]
+
+  - name: pan2
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # ============ AUXILIARY BRANCH (Multi-level Reversible) ============
+
+  # CBLinear routing from main backbone stages
+  - name: cb_route1
+    type: CBLinear
+    from: stage2
+    out_channels_list: [256]
+
+  - name: cb_route2
+    type: CBLinear
+    from: stage3
+    out_channels_list: [256, 512]
+
+  - name: cb_route3
+    type: CBLinear
+    from: stage4
+    out_channels_list: [256, 512, 512]
+
+  # Auxiliary stem (from original input via Silence)
+  - name: aux_stem1
+    type: Conv
+    from: input_silence
+    out_channels: 64
+    kernel_size: 3
+    stride: 2
+
+  - name: aux_stem2
+    type: Conv
+    out_channels: 128
+    kernel_size: 3
+    stride: 2
+
+  # Auxiliary Stage 1
+  - name: aux_stage1
+    type: RepNCSPELAN4
+    out_channels: 256
+    hidden_channels: 128
+    block_channels: 64
+    num_repeats: 1
+
+  # Auxiliary downsample + fuse at P3
+  - name: aux_down1
+    type: ADown
+    out_channels: 256
+
+  - name: aux_fuse1
+    type: CBFuse
+    from: [cb_route1, cb_route2, cb_route3, aux_down1]
+    idx: [0, 0, 0]
+
+  # Auxiliary Stage 2
+  - name: aux_stage2
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 256
+    block_channels: 128
+    num_repeats: 1
+
+  # Auxiliary downsample + fuse at P4
+  - name: aux_down2
+    type: ADown
+    out_channels: 512
+
+  - name: aux_fuse2
+    type: CBFuse
+    from: [cb_route2, cb_route3, aux_down2]
+    idx: [1, 1]
+
+  # Auxiliary Stage 3
+  - name: aux_stage3
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # Auxiliary downsample + fuse at P5
+  - name: aux_down3
+    type: ADown
+    out_channels: 512
+
+  - name: aux_fuse3
+    type: CBFuse
+    from: [cb_route3, aux_down3]
+    idx: [2]
+
+  # Auxiliary Stage 4
+  - name: aux_stage4
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # ============ DUAL DETECTION HEAD ============
+
+  # DualDetectDFL: aux outputs (A3, A4, A5) + main outputs (P3, P4, P5)
+  - name: detect
+    type: DualDetectDFL
+    from: [aux_stage2, aux_stage3, aux_stage4, fpn2, pan1, pan2]

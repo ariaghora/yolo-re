@@ -1,0 +1,146 @@
+# GELAN-C Model Configuration
+# Reference: _reference/yolov9/models/detect/gelan-c.yaml
+
+model:
+  num_classes: 80
+  depth_multiplier: 1.0
+  width_multiplier: 1.0
+
+layers:
+  # ============ BACKBONE ============
+
+  # Stem
+  - name: stem1
+    type: Conv
+    out_channels: 64
+    kernel_size: 3
+    stride: 2
+
+  - name: stem2
+    type: Conv
+    out_channels: 128
+    kernel_size: 3
+    stride: 2
+
+  # Stage 1 (P2)
+  - name: stage1
+    type: RepNCSPELAN4
+    out_channels: 256
+    hidden_channels: 128
+    block_channels: 64
+    num_repeats: 1
+
+  # Downsample to P3
+  - name: down1
+    type: ADown
+    out_channels: 256
+
+  # Stage 2 (P3)
+  - name: stage2
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 256
+    block_channels: 128
+    num_repeats: 1
+
+  # Downsample to P4
+  - name: down2
+    type: ADown
+    out_channels: 512
+
+  # Stage 3 (P4)
+  - name: stage3
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # Downsample to P5
+  - name: down3
+    type: ADown
+    out_channels: 512
+
+  # Stage 4 (P5)
+  - name: stage4
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # ============ NECK (FPN + PAN) ============
+
+  # SPP
+  - name: spp
+    type: SPPELAN
+    out_channels: 512
+    hidden_channels: 256
+
+  # FPN: Top-down path
+  - name: up1
+    type: Upsample
+    scale_factor: 2
+
+  - name: concat1
+    type: Concat
+    from: [up1, stage3]
+
+  - name: fpn1
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  - name: up2
+    type: Upsample
+    scale_factor: 2
+
+  - name: concat2
+    type: Concat
+    from: [up2, stage2]
+
+  - name: fpn2
+    type: RepNCSPELAN4
+    out_channels: 256
+    hidden_channels: 256
+    block_channels: 128
+    num_repeats: 1
+
+  # PAN: Bottom-up path
+  - name: pan_down1
+    type: ADown
+    out_channels: 256
+
+  - name: concat3
+    type: Concat
+    from: [pan_down1, fpn1]
+
+  - name: pan1
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  - name: pan_down2
+    type: ADown
+    out_channels: 512
+
+  - name: concat4
+    type: Concat
+    from: [pan_down2, spp]
+
+  - name: pan2
+    type: RepNCSPELAN4
+    out_channels: 512
+    hidden_channels: 512
+    block_channels: 256
+    num_repeats: 1
+
+  # ============ HEAD ============
+
+  - name: detect
+    type: DetectDFL
+    from: [fpn2, pan1, pan2]

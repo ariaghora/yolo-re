@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Tools
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Project-specific
+_reference/
+weights/
+*.pt
+
+# I do use these according to my style and I don't want to impose this
+# onto others. Use your own AI tool config, but no need to track it.
+.claude
+CLAUDE.md
+CODE_QUALITY.md
+ROADMAP.md
