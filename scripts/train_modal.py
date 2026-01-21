@@ -4,13 +4,15 @@
 Usage:
     modal run scripts/train_modal.py
     modal run scripts/train_modal.py --epochs 50 --batch-size 32
-    modal run scripts/train_modal.py --dataset coco --epochs 300 --gpu A100
+    GPU=A100 modal run scripts/train_modal.py --dataset coco --epochs 300
     modal run scripts/train_modal.py --use-pretrained --augment-preset light
 
 Requirements:
     uv pip install -e ".[modal]"
     modal token new
 """
+
+import os
 
 import modal
 
@@ -522,59 +524,18 @@ def _train_impl(
     }
 
 
-# GPU-specific function wrappers
 @app.function(gpu="T4", volumes={VOLUME_PATH: volume}, timeout=7200)
-def eval_pretrained_t4() -> dict:
+def run_eval_pretrained() -> dict:
     return _eval_pretrained_impl()
 
 
-@app.function(gpu="T4", volumes={VOLUME_PATH: volume}, timeout=86400)
-def train_t4(
-    epochs: int,
-    batch_size: int,
-    lr: float,
-    val_period: int,
-    use_pretrained: bool = False,
-    augment_preset: str = "full",
-    dataset: str = "coco128",
-) -> dict:
-    return _train_impl(
-        epochs, batch_size, lr, val_period, use_pretrained, augment_preset, dataset
-    )
+# GPU must be set via environment variable because Modal decorators
+# evaluate at import time, before CLI args are parsed.
+GPU = os.environ.get("GPU", "T4")
 
 
-@app.function(gpu="L4", volumes={VOLUME_PATH: volume}, timeout=86400)
-def train_l4(
-    epochs: int,
-    batch_size: int,
-    lr: float,
-    val_period: int,
-    use_pretrained: bool = False,
-    augment_preset: str = "full",
-    dataset: str = "coco128",
-) -> dict:
-    return _train_impl(
-        epochs, batch_size, lr, val_period, use_pretrained, augment_preset, dataset
-    )
-
-
-@app.function(gpu="A10G", volumes={VOLUME_PATH: volume}, timeout=86400)
-def train_a10g(
-    epochs: int,
-    batch_size: int,
-    lr: float,
-    val_period: int,
-    use_pretrained: bool = False,
-    augment_preset: str = "full",
-    dataset: str = "coco128",
-) -> dict:
-    return _train_impl(
-        epochs, batch_size, lr, val_period, use_pretrained, augment_preset, dataset
-    )
-
-
-@app.function(gpu="A100", volumes={VOLUME_PATH: volume}, timeout=86400)
-def train_a100(
+@app.function(gpu=GPU, volumes={VOLUME_PATH: volume}, timeout=86400)
+def train(
     epochs: int,
     batch_size: int,
     lr: float,
@@ -594,7 +555,6 @@ def main(
     batch_size: int = 16,
     lr: float = 0.01,
     val_period: int = 5,
-    gpu: str = "T4",
     dataset: str = "coco128",
     eval_pretrained: bool = False,
     use_pretrained: bool = False,
@@ -607,15 +567,17 @@ def main(
         batch_size: Batch size.
         lr: Learning rate.
         val_period: Validate every N epochs.
-        gpu: GPU type (T4, L4, A10G, A100).
         dataset: Dataset ("coco128" for smoke test, "coco" for full training).
         eval_pretrained: If True, evaluate pretrained weights instead of training.
         use_pretrained: If True, start training from pretrained weights.
         augment_preset: Augmentation preset ("full", "light", "minimal").
+
+    Environment:
+        GPU: GPU type (T4, L4, A10G, A100). Default: T4.
     """
     if eval_pretrained:
         print("Evaluating pretrained weights on COCO128...")
-        result = eval_pretrained_t4.remote()
+        result = run_eval_pretrained.remote()
         print(f"Evaluation complete: {result}")
         return
 
@@ -625,21 +587,11 @@ def main(
 
     print(f"Dataset: {dataset}")
     print(f"Training: {epochs} epochs, batch {batch_size}, lr {lr}")
-    print(f"Validation every {val_period} epochs, GPU: {gpu}")
+    print(f"Validation every {val_period} epochs, GPU: {GPU}")
     if use_pretrained:
         print("Starting from pretrained weights")
 
-    train_fn = {
-        "T4": train_t4,
-        "L4": train_l4,
-        "A10G": train_a10g,
-        "A100": train_a100,
-    }.get(gpu.upper())
-
-    if train_fn is None:
-        raise ValueError(f"Unknown GPU: {gpu}. Choose from T4, L4, A10G, A100")
-
-    result = train_fn.remote(
+    result = train.remote(
         epochs=epochs,
         batch_size=batch_size,
         lr=lr,
