@@ -26,6 +26,7 @@ _reference/
 data/
 weights/
 *.pt
+*.npy
 
 # I do use these according to my style and I don't want to impose this
 # onto others. Use your own AI tool config, but no need to track it.

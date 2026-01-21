@@ -231,14 +231,7 @@ class Trainer:
         total_dfl = 0.0
         num_batches = 0
 
-        # Timing accumulators
-        data_time = 0.0
-        forward_time = 0.0
-        loss_time = 0.0
-        backward_time = 0.0
-
         start = time.perf_counter()
-        t_data_start = time.perf_counter()
 
         pbar = tqdm(
             enumerate(self.train_loader),
@@ -247,55 +240,28 @@ class Trainer:
             bar_format="{l_bar}{bar:20}{r_bar}",
         )
         for batch_idx, (images, targets, _, _) in pbar:
-            # Data loading time (includes DataLoader prefetch)
-            t0 = time.perf_counter()
-            data_time += t0 - t_data_start
-
             images = images.to(self.device, non_blocking=True)
             targets = targets.to(self.device)
 
             self.optimizer.zero_grad()
 
             if self.scaler is not None:
-                # Forward pass
-                t1 = time.perf_counter()
                 with autocast(self.device.type):
                     outputs = self.model(images)
-                t2 = time.perf_counter()
-                forward_time += t2 - t1
-
-                # Loss computation
-                with autocast(self.device.type):
                     loss, loss_items = self._compute_loss(outputs, targets)
-                t3 = time.perf_counter()
-                loss_time += t3 - t2
 
-                # Backward pass
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
-                t4 = time.perf_counter()
-                backward_time += t4 - t3
             else:
-                # Forward pass
-                t1 = time.perf_counter()
                 outputs = self.model(images)
-                t2 = time.perf_counter()
-                forward_time += t2 - t1
-
-                # Loss computation
                 loss, loss_items = self._compute_loss(outputs, targets)
-                t3 = time.perf_counter()
-                loss_time += t3 - t2
 
-                # Backward pass
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                 self.optimizer.step()
-                t4 = time.perf_counter()
-                backward_time += t4 - t3
 
             self.scheduler.step()
             self.global_step += 1
@@ -311,25 +277,11 @@ class Trainer:
             # Update progress bar with current losses
             pbar.set_postfix(box=f"{box_val:.3f}", cls=f"{cls_val:.3f}", dfl=f"{dfl_val:.3f}")
 
-            # Reset data timer for next batch
-            t_data_start = time.perf_counter()
-
         elapsed = time.perf_counter() - start
         n = max(num_batches, 1)
         avg_box, avg_cls, avg_dfl = total_box / n, total_cls / n, total_dfl / n
 
-        # Log timing breakdown
-        total_time = data_time + forward_time + loss_time + backward_time
-        if total_time > 0:
-            logger.info(
-                f"Epoch {self.epoch + 1} timing: "
-                f"data={data_time:.2f}s ({100*data_time/total_time:.0f}%) "
-                f"forward={forward_time:.2f}s ({100*forward_time/total_time:.0f}%) "
-                f"loss={loss_time:.2f}s ({100*loss_time/total_time:.0f}%) "
-                f"backward={backward_time:.2f}s ({100*backward_time/total_time:.0f}%)"
-            )
-
-        logger.info(
+        tqdm.write(
             f"Epoch {self.epoch + 1} done in {elapsed:.1f}s - "
             f"box: {avg_box:.4f} cls: {avg_cls:.4f} dfl: {avg_dfl:.4f}"
         )
