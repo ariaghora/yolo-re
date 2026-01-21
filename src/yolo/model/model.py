@@ -219,15 +219,20 @@ class YOLO(nn.Module):
         return model
 
     @classmethod
-    def from_yaml(cls, path: str | Path, input_channels: int = 3) -> "YOLO":
+    def from_yaml(
+        cls, path: str | Path, input_channels: int = 3, num_classes: int | None = None
+    ) -> "YOLO":
         """Build model from YAML config file.
 
         Args:
             path: Path to YAML config.
             input_channels: Number of input image channels.
+            num_classes: Override num_classes from YAML config.
 
         Returns:
             YOLO model.
         """
         config = parse_yaml(path)
+        if num_classes is not None:
+            config.num_classes = num_classes
         return cls.from_config(config, input_channels)

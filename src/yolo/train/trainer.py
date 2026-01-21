@@ -19,6 +19,7 @@ from yolo.data.dataset import create_dataloader
 from yolo.loss.tal import LossConfig, TALoss
 from yolo.model.model import YOLO
 from yolo.train.config import TrainConfig
+from yolo.train.ema import ModelEMA
 from yolo.train.scheduler import WarmupCosineScheduler
 from yolo.utils.device import get_device
 
@@ -154,6 +155,9 @@ class Trainer:
         if config.amp and self.device.type == "cuda":
             self.scaler = GradScaler(self.device.type)
 
+        # EMA
+        self.ema = ModelEMA(self.model)
+
         # State
         self.epoch = 0
         self.global_step = 0
@@ -263,6 +267,7 @@ class Trainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                 self.optimizer.step()
 
+            self.ema.update(self.model)
             self.scheduler.step()
             self.global_step += 1
 
@@ -309,17 +314,16 @@ class Trainer:
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
-        """Run validation with mAP computation."""
+        """Run validation with mAP computation using EMA weights."""
         if self.val_loader is None:
             return {}
 
         from yolo.eval.evaluator import Evaluator
 
-        # Get num_classes from model
         num_classes, _, _ = self._get_detect_info()
 
         evaluator = Evaluator(
-            model=self.model,
+            model=self.ema.ema,
             dataloader=self.val_loader,
             num_classes=num_classes,
             device=self.device,
@@ -337,6 +341,7 @@ class Trainer:
             "best_fitness": self.best_fitness,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
+            "ema": self.ema.state_dict(),
             "config": self.config,
         }
 
@@ -356,6 +361,9 @@ class Trainer:
         self.epoch = ckpt["epoch"] + 1
         self.global_step = ckpt["global_step"]
         self.best_fitness = ckpt.get("best_fitness", 0.0)
+
+        if "ema" in ckpt:
+            self.ema.load_state_dict(ckpt["ema"])
 
         if self.scaler is not None and "scaler_state_dict" in ckpt:
             self.scaler.load_state_dict(ckpt["scaler_state_dict"])
