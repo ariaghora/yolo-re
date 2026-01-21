@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
 from torch.optim import SGD
 
 from yolo.data.config import DataConfig
@@ -143,10 +144,10 @@ class Trainer:
             lrf=config.lrf,
         )
 
-        # AMP
+        # AMP (CUDA only - MPS doesn't support GradScaler)
         self.scaler: GradScaler | None = None
         if config.amp and self.device.type == "cuda":
-            self.scaler = GradScaler()
+            self.scaler = GradScaler(self.device.type)
 
         # State
         self.epoch = 0
@@ -220,7 +221,6 @@ class Trainer:
     def train_one_epoch(self) -> dict[str, float]:
         """Train for one epoch."""
         self.model.train()
-        total_loss = 0.0
         total_box = 0.0
         total_cls = 0.0
         total_dfl = 0.0
@@ -235,57 +235,63 @@ class Trainer:
             self.optimizer.zero_grad()
 
             if self.scaler is not None:
-                with autocast():
+                with autocast(self.device.type):
                     outputs = self.model(images)
                     loss, loss_items = self._compute_loss(outputs, targets)
                 self.scaler.scale(loss).backward()
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 outputs = self.model(images)
                 loss, loss_items = self._compute_loss(outputs, targets)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                 self.optimizer.step()
 
             self.scheduler.step()
             self.global_step += 1
 
-            total_loss += loss.item()
-            total_box += loss_items[0]
-            total_cls += loss_items[1]
-            total_dfl += loss_items[2]
+            total_box += loss_items[0].item()
+            total_cls += loss_items[1].item()
+            total_dfl += loss_items[2].item()
             num_batches += 1
 
             if (batch_idx + 1) % self.config.log_interval == 0:
                 lr = self.scheduler.get_lr()[0]
+                box, cls, dfl = loss_items[0].item(), loss_items[1].item(), loss_items[2].item()
                 logger.info(
                     f"Epoch {self.epoch + 1}/{self.config.epochs} "
                     f"[{batch_idx + 1}/{len(self.train_loader)}] "
-                    f"loss: {loss.item():.4f} lr: {lr:.6f}"
+                    f"box: {box:.4f} cls: {cls:.4f} dfl: {dfl:.4f} lr: {lr:.6f}"
                 )
 
         elapsed = time.time() - start
         n = max(num_batches, 1)
+        avg_box, avg_cls, avg_dfl = total_box / n, total_cls / n, total_dfl / n
 
         logger.info(
             f"Epoch {self.epoch + 1} done in {elapsed:.1f}s - "
-            f"loss: {total_loss/n:.4f} "
-            f"box: {total_box/n:.4f} cls: {total_cls/n:.4f} dfl: {total_dfl/n:.4f}"
+            f"box: {avg_box:.4f} cls: {avg_cls:.4f} dfl: {avg_dfl:.4f}"
         )
 
         return {
-            "loss": total_loss / n,
-            "box_loss": total_box / n,
-            "cls_loss": total_cls / n,
-            "dfl_loss": total_dfl / n,
+            "box_loss": avg_box,
+            "cls_loss": avg_cls,
+            "dfl_loss": avg_dfl,
         }
 
     def _compute_loss(
         self,
         outputs: Tensor | tuple[Tensor, list[Tensor]],
         targets: Tensor,
-    ) -> tuple[Tensor, tuple[float, float, float]]:
-        """Compute loss from model outputs."""
+    ) -> tuple[Tensor, Tensor]:
+        """Compute loss from model outputs.
+
+        Returns:
+            Tuple of (total_loss, loss_items) where loss_items is (box, cls, dfl).
+        """
         if isinstance(outputs, tuple):
             preds, aux_preds = outputs
             return self.loss_fn(preds, targets, aux_preds)
@@ -307,9 +313,10 @@ class Trainer:
             dataloader=self.val_loader,
             num_classes=num_classes,
             device=self.device,
+            debug_dir=self.output_dir / "debug",
         )
 
-        metrics = evaluator.evaluate()
+        metrics = evaluator.evaluate(epoch=self.epoch + 1)
         return metrics
 
     def save_checkpoint(self, filename: str) -> None:

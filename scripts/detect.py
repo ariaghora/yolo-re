@@ -220,7 +220,7 @@ def main():
         orig_shape = img0.shape[:2]  # (h, w)
 
         # Preprocess
-        img, ratio_pad, _ = letterbox(img0, args.img_size)
+        img, ratio, pad = letterbox(img0, args.img_size)
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, HWC to CHW
         img = np.ascontiguousarray(img)
         img = torch.from_numpy(img).float().to(device) / 255.0
@@ -236,8 +236,15 @@ def main():
         # Get predictions
         if isinstance(outputs, tuple):
             preds = outputs[0]
+            # DualDetectDFL returns [aux_decoded, main_decoded] - use main branch
+            if isinstance(preds, list):
+                preds = preds[1]  # main branch
+            # preds shape: (batch, 4+num_classes, num_anchors)
         else:
             raise NotImplementedError("Raw output not supported")
+
+        # Transpose to (batch, num_anchors, 4+num_classes) for NMS
+        preds = preds.permute(0, 2, 1).contiguous()
 
         # NMS
         detections = non_max_suppression(
@@ -248,11 +255,12 @@ def main():
 
         # Scale boxes to original size
         if len(detections) > 0:
+            img_hw = (img.shape[2], img.shape[3])
             detections[:, :4] = scale_boxes(
                 detections[:, :4],
-                img.shape[2:],
+                img_hw,
                 orig_shape,
-                (ratio_pad, (int(ratio_pad[1][0]), int(ratio_pad[1][1]))),
+                (ratio, pad),
             )
 
         # Results

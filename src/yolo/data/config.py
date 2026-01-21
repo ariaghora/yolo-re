@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -17,33 +18,110 @@ class CacheMode(Enum):
     DISK = "disk"  # Cache resized images as .npy files
 
 
+AugmentPreset = Literal["full", "light", "minimal"]
+
+# Preset definitions for augmentation
+_AUGMENT_PRESETS: dict[AugmentPreset, dict[str, float | tuple[float, float]]] = {
+    # Full augmentation for training from scratch (matches hyp.scratch-high.yaml)
+    "full": {
+        "mosaic": 1.0,
+        "mosaic_scale": (0.5, 1.5),
+        "mixup": 0.15,
+        "hsv_h": 0.015,
+        "hsv_s": 0.7,
+        "hsv_v": 0.4,
+        "degrees": 0.0,
+        "translate": 0.1,
+        "scale": 0.9,
+        "shear": 0.0,
+        "perspective": 0.0,
+        "flipud": 0.0,
+        "fliplr": 0.5,
+    },
+    # Light augmentation for fine-tuning pretrained weights
+    "light": {
+        "mosaic": 0.5,
+        "mosaic_scale": (0.8, 1.2),
+        "mixup": 0.0,
+        "hsv_h": 0.01,
+        "hsv_s": 0.5,
+        "hsv_v": 0.3,
+        "degrees": 0.0,
+        "translate": 0.1,
+        "scale": 0.5,
+        "shear": 0.0,
+        "perspective": 0.0,
+        "flipud": 0.0,
+        "fliplr": 0.5,
+    },
+    # Minimal augmentation for debugging or very short fine-tuning
+    "minimal": {
+        "mosaic": 0.0,
+        "mosaic_scale": (1.0, 1.0),
+        "mixup": 0.0,
+        "hsv_h": 0.0,
+        "hsv_s": 0.0,
+        "hsv_v": 0.0,
+        "degrees": 0.0,
+        "translate": 0.0,
+        "scale": 0.0,
+        "shear": 0.0,
+        "perspective": 0.0,
+        "flipud": 0.0,
+        "fliplr": 0.5,
+    },
+}
+
+
 @dataclass
 class AugmentConfig:
     """Augmentation configuration.
 
-    Defaults match reference YOLOv9 hyp.scratch-high.yaml.
+    Use preset="full" for training from scratch (matches hyp.scratch-high.yaml).
+    Use preset="light" for fine-tuning pretrained weights.
+    Use preset="minimal" for debugging or when augmentation hurts performance.
+
+    Individual parameters can override preset defaults.
     """
 
-    # Mosaic
-    mosaic: float = 1.0
-    mosaic_scale: tuple[float, float] = (0.5, 1.5)
-    mixup: float = 0.15  # Reference default
+    preset: AugmentPreset = "full"
+
+    # Mosaic (None = use preset default)
+    mosaic: float | None = None
+    mosaic_scale: tuple[float, float] | None = None
+    mixup: float | None = None
 
     # HSV
-    hsv_h: float = 0.015
-    hsv_s: float = 0.7
-    hsv_v: float = 0.4
+    hsv_h: float | None = None
+    hsv_s: float | None = None
+    hsv_v: float | None = None
 
     # Geometric
-    degrees: float = 0.0
-    translate: float = 0.1
-    scale: float = 0.9  # Reference default
-    shear: float = 0.0
-    perspective: float = 0.0
+    degrees: float | None = None
+    translate: float | None = None
+    scale: float | None = None
+    shear: float | None = None
+    perspective: float | None = None
 
     # Flips
-    flipud: float = 0.0
-    fliplr: float = 0.5
+    flipud: float | None = None
+    fliplr: float | None = None
+
+    def __post_init__(self) -> None:
+        """Apply preset defaults for any None values."""
+        if self.preset not in _AUGMENT_PRESETS:
+            valid = list(_AUGMENT_PRESETS)
+            raise ValueError(f"Unknown preset: {self.preset}. Choose from: {valid}")
+
+        defaults = _AUGMENT_PRESETS[self.preset]
+        for key, val in defaults.items():
+            if getattr(self, key) is None:
+                setattr(self, key, val)
+
+    @classmethod
+    def from_preset(cls, preset: AugmentPreset) -> AugmentConfig:
+        """Create config from a preset name."""
+        return cls(preset=preset)
 
 
 @dataclass

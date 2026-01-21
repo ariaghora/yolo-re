@@ -88,7 +88,21 @@ class Mosaic(Transform):
 
     def __call__(self, sample: Sample) -> Sample:
         if random.random() >= self.p:
-            return sample
+            # When mosaic is skipped, apply letterbox to resize image and convert labels
+            # This ensures consistent output format (image at target size, labels in xyxy pixels)
+            img, ratio, pad = letterbox(sample.img, sample.img_size, auto=False, scaleup=True)
+            labels = sample.labels.copy()
+            if labels.size:
+                h, w = sample.img.shape[:2]
+                labels[:, 1:] = xywhn2xyxy(
+                    labels[:, 1:], ratio[0] * w, ratio[1] * h, pad[0], pad[1]
+                )
+            return Sample(
+                img=img,
+                labels=labels,
+                img_size=sample.img_size,
+                original_shape=sample.original_shape,
+            )
 
         s = sample.img_size
         mosaic_border = (-s // 2, -s // 2)

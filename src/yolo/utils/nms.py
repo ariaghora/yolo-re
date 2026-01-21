@@ -6,6 +6,16 @@ import torch
 from torch import Tensor
 
 
+def xywh2xyxy(x: Tensor) -> Tensor:
+    """Convert boxes from xywh to xyxy format."""
+    y = x.clone()
+    y[:, 0] = x[:, 0] - x[:, 2] / 2  # x1
+    y[:, 1] = x[:, 1] - x[:, 3] / 2  # y1
+    y[:, 2] = x[:, 0] + x[:, 2] / 2  # x2
+    y[:, 3] = x[:, 1] + x[:, 3] / 2  # y2
+    return y
+
+
 def non_max_suppression(
     predictions: Tensor,
     conf_thres: float = 0.25,
@@ -17,8 +27,8 @@ def non_max_suppression(
     """Apply Non-Maximum Suppression to model predictions.
 
     Args:
-        predictions: Raw model output, shape (batch, num_anchors, 4 + num_classes).
-            Boxes are in xyxy format, class scores are raw (pre-sigmoid for cls).
+        predictions: Model output, shape (batch, num_anchors, 4 + num_classes).
+            Boxes in xywh format (pixels), class scores already sigmoided.
         conf_thres: Confidence threshold for filtering.
         iou_thres: IoU threshold for NMS.
         max_det: Maximum detections per image.
@@ -36,9 +46,9 @@ def non_max_suppression(
     for i in range(batch_size):
         pred = predictions[i]  # (num_anchors, 4 + num_classes)
 
-        # Get boxes and class scores
-        boxes = pred[:, :4]  # (num_anchors, 4)
-        cls_scores = pred[:, 4:].sigmoid()  # (num_anchors, num_classes)
+        # Get boxes (xywh) and class scores (already sigmoided by model)
+        boxes_xywh = pred[:, :4]  # (num_anchors, 4)
+        cls_scores = pred[:, 4:]  # (num_anchors, num_classes) - already sigmoided
 
         # Get max class score and class index per box
         conf, cls_idx = cls_scores.max(dim=1)  # (num_anchors,)
@@ -48,9 +58,12 @@ def non_max_suppression(
         if classes is not None:
             mask &= torch.isin(cls_idx, torch.tensor(classes, device=pred.device))
 
-        boxes = boxes[mask]
+        boxes_xywh = boxes_xywh[mask]
         conf = conf[mask]
         cls_idx = cls_idx[mask]
+
+        # Convert xywh to xyxy for NMS
+        boxes = xywh2xyxy(boxes_xywh)
 
         if boxes.shape[0] == 0:
             output.append(torch.zeros((0, 6), device=pred.device, dtype=pred.dtype))
