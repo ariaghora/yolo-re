@@ -88,67 +88,78 @@ def compute_map(
 
     num_images = len(pred_boxes)
 
-    # Collect all predictions and ground truths by class
+    # Precompute IoUs per image and cache GT info per class
+    # This avoids redundant computation across IoU thresholds
+    
     all_aps: dict[float, list[float]] = {t: [] for t in iou_thresholds}
 
     for cls_id in range(num_classes):
-        # Gather predictions for this class across all images
-        cls_preds: list[tuple[int, float, Tensor]] = []  # (img_id, score, box)
-        cls_gts: list[tuple[int, Tensor]] = []  # (img_id, box)
-        gt_matched: dict[int, list[bool]] = {}  # Track which GTs are matched
-
+        # Gather all predictions and GTs for this class
+        # Group by image for efficient IoU computation
+        img_preds: dict[int, list[tuple[float, int]]] = {}  # img_id -> [(score, local_idx)]
+        img_pred_boxes: dict[int, Tensor] = {}  # img_id -> stacked pred boxes
+        img_gt_boxes: dict[int, Tensor] = {}  # img_id -> stacked gt boxes
+        
+        total_gt = 0
+        
         for img_id in range(num_images):
-            # Predictions
+            # Predictions for this class
             if len(pred_classes[img_id]) > 0:
                 mask = pred_classes[img_id] == cls_id
-                for score, box in zip(
-                    pred_scores[img_id][mask].tolist(),
-                    pred_boxes[img_id][mask],
-                ):
-                    cls_preds.append((img_id, score, box))
-
-            # Ground truths
+                if mask.any():
+                    scores = pred_scores[img_id][mask]
+                    boxes = pred_boxes[img_id][mask]
+                    img_pred_boxes[img_id] = boxes
+                    img_preds[img_id] = [(s.item(), i) for i, s in enumerate(scores)]
+            
+            # Ground truths for this class
             if len(gt_classes[img_id]) > 0:
                 mask = gt_classes[img_id] == cls_id
-                boxes = gt_boxes[img_id][mask]
-                gt_matched[img_id] = [False] * len(boxes)
-                for box in boxes:
-                    cls_gts.append((img_id, box))
+                if mask.any():
+                    img_gt_boxes[img_id] = gt_boxes[img_id][mask]
+                    total_gt += mask.sum().item()
 
-        if not cls_gts:
-            # No ground truth for this class
+        if total_gt == 0:
             continue
 
-        if not cls_preds:
-            # No predictions, AP = 0
+        if not img_preds:
             for t in iou_thresholds:
                 all_aps[t].append(0.0)
             continue
 
-        # Sort predictions by score descending
-        cls_preds.sort(key=lambda x: x[1], reverse=True)
-        num_gt = len(cls_gts)
+        # Precompute IoU matrices for all images that have both preds and GTs
+        img_ious: dict[int, Tensor] = {}
+        for img_id in img_preds:
+            if img_id in img_gt_boxes:
+                img_ious[img_id] = box_iou(img_pred_boxes[img_id], img_gt_boxes[img_id])
+
+        # Flatten and sort all predictions by score
+        all_preds: list[tuple[float, int, int]] = []  # (score, img_id, local_idx)
+        for img_id, preds in img_preds.items():
+            for score, local_idx in preds:
+                all_preds.append((score, img_id, local_idx))
+        all_preds.sort(key=lambda x: x[0], reverse=True)
+
+        num_preds = len(all_preds)
 
         # Evaluate at each IoU threshold
         for iou_thresh in iou_thresholds:
-            # Reset GT matched flags
-            matched = {k: [False] * len(v) for k, v in gt_matched.items()}
+            # Track matched GTs per image
+            matched: dict[int, list[bool]] = {
+                img_id: [False] * len(boxes) for img_id, boxes in img_gt_boxes.items()
+            }
 
-            tp = np.zeros(len(cls_preds))
-            fp = np.zeros(len(cls_preds))
+            tp = np.zeros(num_preds)
+            fp = np.zeros(num_preds)
 
-            for pred_idx, (img_id, score, pred_box) in enumerate(cls_preds):
-                # Get GTs for this image
-                gt_mask = gt_classes[img_id] == cls_id
-                img_gt_boxes = gt_boxes[img_id][gt_mask]
-
-                if len(img_gt_boxes) == 0:
+            for pred_idx, (score, img_id, local_idx) in enumerate(all_preds):
+                if img_id not in img_gt_boxes:
                     fp[pred_idx] = 1
                     continue
 
-                # Compute IoU with all GTs
-                ious = box_iou(pred_box.unsqueeze(0), img_gt_boxes).squeeze(0)
-                best_iou, best_gt = ious.max(dim=0)
+                ious = img_ious[img_id][local_idx]
+                best_iou, best_gt_idx = ious.max(dim=0)
+                best_gt = int(best_gt_idx.item())
 
                 if best_iou >= iou_thresh and not matched[img_id][best_gt]:
                     tp[pred_idx] = 1
@@ -159,7 +170,7 @@ def compute_map(
             # Compute precision/recall
             tp_cumsum = np.cumsum(tp)
             fp_cumsum = np.cumsum(fp)
-            recall = tp_cumsum / num_gt
+            recall = tp_cumsum / total_gt
             precision = tp_cumsum / (tp_cumsum + fp_cumsum)
 
             ap = compute_ap(recall, precision)
@@ -168,7 +179,6 @@ def compute_map(
     # Aggregate results
     results: dict[str, float] = {}
 
-    # mAP at specific thresholds
     if 0.5 in all_aps and all_aps[0.5]:
         results["map50"] = float(np.mean(all_aps[0.5]))
     else:

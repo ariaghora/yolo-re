@@ -209,6 +209,8 @@ def download_voc(data_dir: str = "/vol/data") -> tuple[str, str]:
 
     voc_path = data_path / "VOCdevkit"
 
+    # Download and extract all VOC tarballs
+    # Use marker files to track what's been extracted
     urls = [
         "http://data.brainchip.com/dataset-mirror/voc/VOCtrainval_11-May-2012.tar",
         "http://data.brainchip.com/dataset-mirror/voc/VOCtrainval_06-Nov-2007.tar",
@@ -216,13 +218,17 @@ def download_voc(data_dir: str = "/vol/data") -> tuple[str, str]:
     ]
     for url in urls:
         name = url.split("/")[-1]
+        marker = data_path / f".{name}.done"
+        if marker.exists():
+            continue
         tar_path = data_path / name
-        if not tar_path.exists() and not voc_path.exists():
+        if not tar_path.exists():
             download_with_progress(url, str(tar_path))
-            print(f"Extracting {name}...")
-            with tarfile.open(tar_path) as tf:
-                tf.extractall(data_path)
-            tar_path.unlink()
+        print(f"Extracting {name}...")
+        with tarfile.open(tar_path) as tf:
+            tf.extractall(data_path)
+        tar_path.unlink()
+        marker.touch()
 
     for split in ["train", "val"]:
         (data_path / "images" / split).mkdir(parents=True, exist_ok=True)
@@ -235,6 +241,7 @@ def download_voc(data_dir: str = "/vol/data") -> tuple[str, str]:
     if test_file.exists():
         with open(test_file) as f:
             test_ids = {line.strip() for line in f if line.strip()}
+    print(f"VOC test_file exists: {test_file.exists()}, test_ids count: {len(test_ids)}")
 
     # Collect all images first for progress bar
     all_images: list[tuple[Path, Path, Path]] = []
@@ -504,6 +511,8 @@ def _train_impl(
         augment=augment,
     )
 
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
     trainer = Trainer(
         model,
         data,
@@ -512,6 +521,7 @@ def _train_impl(
         val_period=val_period,
         output_dir=f"{VOLUME_PATH}/runs",
         device="cuda",
+        optimizer=optimizer,
     )
 
     trainer.train()
