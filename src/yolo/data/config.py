@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+import yaml
+
 
 class CacheMode(Enum):
     """Image caching strategy."""
@@ -70,3 +72,10 @@ class DataConfig:
         self.train_path = Path(self.train_path)
         if self.val_path is not None:
             self.val_path = Path(self.val_path)
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> DataConfig:
+        """Load config from YAML file."""
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return cls(**data)

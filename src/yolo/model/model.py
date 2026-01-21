@@ -162,6 +162,46 @@ class YOLO(nn.Module):
         self._stride_initialized = True
         self.train()
 
+    def optim_groups(
+        self, weight_decay: float = 0.0005
+    ) -> list[dict[str, list[nn.Parameter] | float]]:
+        """Get parameter groups with proper weight decay settings.
+
+        Weight decay should not apply to biases or normalization layers.
+        This method returns groups suitable for optimizer constructors.
+
+        Args:
+            weight_decay: Weight decay for conv/linear weights.
+
+        Returns:
+            List of param group dicts:
+            - Group 0: Conv/Linear weights (with weight_decay)
+            - Group 1: BatchNorm weights (no decay)
+            - Group 2: All biases (no decay)
+
+        Example:
+            optimizer = AdamW(model.optim_groups(0.0005), lr=0.01)
+        """
+        g_weights: list[nn.Parameter] = []
+        g_bn: list[nn.Parameter] = []
+        g_bias: list[nn.Parameter] = []
+
+        for module in self.modules():
+            if hasattr(module, "bias") and isinstance(module.bias, nn.Parameter):
+                g_bias.append(module.bias)
+
+            if isinstance(module, (nn.BatchNorm2d, nn.SyncBatchNorm, nn.GroupNorm)):
+                if hasattr(module, "weight") and isinstance(module.weight, nn.Parameter):
+                    g_bn.append(module.weight)
+            elif hasattr(module, "weight") and isinstance(module.weight, nn.Parameter):
+                g_weights.append(module.weight)
+
+        return [
+            {"params": g_weights, "weight_decay": weight_decay},
+            {"params": g_bn, "weight_decay": 0.0},
+            {"params": g_bias, "weight_decay": 0.0},
+        ]
+
     @classmethod
     def from_config(cls, config: ModelConfig, input_channels: int = 3) -> "YOLO":
         """Build model from config.

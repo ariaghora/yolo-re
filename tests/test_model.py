@@ -116,3 +116,50 @@ class TestModelConfig:
         assert config.num_classes == 10
         assert config.depth_multiplier == 0.5
         assert config.width_multiplier == 0.25
+
+
+class TestOptimGroups:
+    """Tests for YOLO.optim_groups()."""
+
+    def test_returns_three_groups(self):
+        """Test that optim_groups returns 3 param groups."""
+        model = YOLO.from_yaml(CONFIGS_DIR / "gelan-c.yaml")
+        groups = model.optim_groups()
+
+        assert len(groups) == 3
+
+    def test_weight_decay_assignment(self):
+        """Test weight decay is only on conv/linear weights."""
+        model = YOLO.from_yaml(CONFIGS_DIR / "gelan-c.yaml")
+        groups = model.optim_groups(weight_decay=0.01)
+
+        # Group 0: weights (has decay)
+        # Group 1: bn (no decay)
+        # Group 2: bias (no decay)
+        assert groups[0]["weight_decay"] == 0.01
+        assert groups[1]["weight_decay"] == 0.0
+        assert groups[2]["weight_decay"] == 0.0
+
+    def test_params_are_included(self):
+        """Test param groups contain parameters."""
+        model = YOLO.from_yaml(CONFIGS_DIR / "gelan-c.yaml")
+        groups = model.optim_groups()
+
+        total_in_groups = 0
+        for g in groups:
+            params = g["params"]
+            if isinstance(params, list):
+                total_in_groups += len(params)
+
+        # Should have a reasonable number of params
+        assert total_in_groups > 100
+
+    def test_works_with_optimizer(self):
+        """Test groups work with actual optimizer."""
+        from torch.optim import AdamW
+
+        model = YOLO.from_yaml(CONFIGS_DIR / "gelan-c.yaml")
+        groups = model.optim_groups(weight_decay=0.0005)
+
+        optimizer = AdamW(groups, lr=0.01)
+        assert len(optimizer.param_groups) == 3

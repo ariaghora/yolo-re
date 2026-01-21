@@ -1,0 +1,15 @@
+# Training hyperparameters
+
+epochs: 300
+
+# Optimizer
+lr: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+
+# Scheduler
+warmup_epochs: 3.0
+lrf: 0.01
+
+# Output
+output_dir: runs/train

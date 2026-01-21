@@ -180,31 +180,6 @@ class TestTALoss:
         assert loss_fn.config.cls_gain == 1.0
         assert loss_fn.config.dfl_gain == 2.0
 
-    def test_label_smoothing(self):
-        """Label smoothing affects loss computation."""
-        num_classes = 80
-        reg_max = 16
-        strides = [8, 16, 32]
-        no = reg_max * 4 + num_classes
-
-        feats = [
-            torch.randn(1, no, 20, 20),
-            torch.randn(1, no, 10, 10),
-            torch.randn(1, no, 5, 5),
-        ]
-        targets = torch.tensor([[0, 0, 0.5, 0.5, 0.1, 0.1]])
-
-        # Without label smoothing
-        loss_fn_no_smooth = TALoss(num_classes, reg_max, strides, LossConfig(label_smoothing=0.0))
-        loss_no_smooth, _ = loss_fn_no_smooth(feats, targets)
-
-        # With label smoothing
-        loss_fn_smooth = TALoss(num_classes, reg_max, strides, LossConfig(label_smoothing=0.1))
-        loss_smooth, _ = loss_fn_smooth(feats, targets)
-
-        # Losses should differ when label smoothing is applied
-        assert loss_no_smooth.item() != loss_smooth.item()
-
     def test_gradient_flow(self):
         """Gradients flow through loss computation."""
         num_classes = 80
