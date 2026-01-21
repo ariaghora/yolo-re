@@ -71,13 +71,18 @@ class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
         self.im_files = self._get_image_files()
         self.label_files = self._img2label_paths(self.im_files)
         self.npy_files = [f.with_suffix(".npy") for f in self.im_files]
-        self.labels = self._load_labels()
 
         self.n = len(self.im_files)
         self.indices = list(range(self.n))
 
-        # Load image shapes for rect training
-        self.shapes = self._load_shapes()
+        # Load labels and shapes (from cache if available)
+        cached = self._load_cache()
+        if cached is not None:
+            self.labels, self.shapes = cached
+        else:
+            self.labels = self._load_labels()
+            self.shapes = self._load_shapes()
+            self._save_cache(self.labels, self.shapes)
 
         # Setup rect training (sort by aspect ratio)
         self.batch: np.ndarray | None = None
@@ -134,13 +139,46 @@ class YOLODataset(Dataset[tuple[Tensor, Tensor, str, tuple[int, int]]]):
     def _load_shapes(self) -> np.ndarray:
         """Load image shapes (h, w) for all images."""
         shapes = []
-        for f in self.im_files:
+        for f in tqdm(self.im_files, desc=f"Reading shapes ({self.path.name})"):
             img = cv2.imread(str(f))
             if img is not None:
                 shapes.append(img.shape[:2])
             else:
                 shapes.append((self.img_size, self.img_size))
         return np.array(shapes)
+
+    def _get_cache_hash(self) -> str:
+        """Get hash of dataset files for cache validation."""
+        import hashlib
+
+        size = sum(f.stat().st_size for f in self.im_files if f.exists())
+        h = hashlib.md5(str(size).encode())
+        h.update("".join(str(f) for f in self.im_files).encode())
+        return h.hexdigest()
+
+    def _load_cache(self) -> tuple[list[np.ndarray], np.ndarray] | None:
+        """Load labels and shapes from cache file."""
+        cache_path = self.path.parent / f".{self.path.name}.cache.npy"
+        if not cache_path.exists():
+            return None
+        try:
+            cache = np.load(cache_path, allow_pickle=True).item()
+            if cache.get("hash") != self._get_cache_hash():
+                return None
+            return cache["labels"], cache["shapes"]
+        except Exception:
+            return None
+
+    def _save_cache(self, labels: list[np.ndarray], shapes: np.ndarray) -> None:
+        """Save labels and shapes to cache file."""
+        cache_path = self.path.parent / f".{self.path.name}.cache.npy"
+        try:
+            np.save(
+                cache_path,
+                {"hash": self._get_cache_hash(), "labels": labels, "shapes": shapes},
+            )
+        except Exception:
+            pass  # Non-fatal if we can't write cache
 
     def _setup_rect(self, batch_size: int, pad: float) -> None:
         """Setup rectangular training by sorting images by aspect ratio."""
@@ -357,4 +395,5 @@ def create_dataloader(
         drop_last=train,
         worker_init_fn=seed_worker,
         generator=generator,
+        persistent_workers=config.workers > 0,
     )
