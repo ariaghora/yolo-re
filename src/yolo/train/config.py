@@ -33,6 +33,9 @@ class TrainConfig:
     output_dir: Path | str = "runs/train"
     save_period: int = -1  # -1 means only best/last
 
+    # Validation
+    val_period: int = 1  # Validate every N epochs (1 = every epoch)
+
     # Device
     device: str = "auto"  # auto, cuda, mps, cpu
     amp: bool = True

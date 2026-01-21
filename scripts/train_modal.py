@@ -90,6 +90,7 @@ def train(
     epochs: int = 10,
     batch_size: int = 16,
     lr: float = 0.01,
+    val_period: int = 5,
 ) -> dict:
     """Train YOLO on COCO128.
 
@@ -97,6 +98,7 @@ def train(
         epochs: Number of training epochs.
         batch_size: Batch size.
         lr: Learning rate.
+        val_period: Validate every N epochs.
 
     Returns:
         Training metrics.
@@ -110,8 +112,10 @@ def train(
     # Load model
     model = YOLO.from_yaml("/root/configs/models/gelan-c.yaml")
 
+    # COCO128 uses same images for train/val (it's a smoke test dataset)
     data = DataConfig(
         train_path=train_path,
+        val_path=train_path,
         num_classes=80,
         batch_size=batch_size,
         workers=4,
@@ -122,6 +126,7 @@ def train(
         data,
         epochs=epochs,
         lr=lr,
+        val_period=val_period,
         output_dir=f"{VOLUME_PATH}/runs",
         device="cuda",
     )
@@ -133,6 +138,7 @@ def train(
 
     return {
         "epochs": epochs,
+        "best_map50": trainer.best_fitness,
         "checkpoint": f"{VOLUME_PATH}/runs/last.pt",
     }
 
@@ -142,6 +148,7 @@ def main(
     epochs: int = 10,
     batch_size: int = 16,
     lr: float = 0.01,
+    val_period: int = 5,
 ):
     """Local entrypoint for modal run.
 
@@ -149,7 +156,14 @@ def main(
         epochs: Number of training epochs.
         batch_size: Batch size.
         lr: Learning rate.
+        val_period: Validate every N epochs.
     """
     print(f"Starting training: {epochs} epochs, batch {batch_size}, lr {lr}")
-    result = train.remote(epochs=epochs, batch_size=batch_size, lr=lr)
+    print(f"Validation every {val_period} epochs")
+    result = train.remote(
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        val_period=val_period,
+    )
     print(f"Training complete: {result}")

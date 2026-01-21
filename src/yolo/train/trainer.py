@@ -190,7 +190,14 @@ class Trainer:
             self.epoch = epoch
             self.train_one_epoch()
 
-            if self.val_loader is not None:
+            # Validation at specified interval
+            should_validate = (
+                self.val_loader is not None
+                and self.config.val_period > 0
+                and (epoch + 1) % self.config.val_period == 0
+            )
+
+            if should_validate:
                 metrics = self.validate()
                 fitness = metrics.get("map50", 0.0)
 
@@ -200,6 +207,12 @@ class Trainer:
 
             if self.config.save_period > 0 and (epoch + 1) % self.config.save_period == 0:
                 self.save_checkpoint(f"epoch{epoch + 1}.pt")
+
+        # Final validation if not done on last epoch
+        if self.val_loader is not None and self.config.val_period > 0:
+            last_val_epoch = (self.config.epochs // self.config.val_period) * self.config.val_period
+            if last_val_epoch != self.config.epochs:
+                self.validate()
 
         self.save_checkpoint("last.pt")
         logger.info("Training complete")
@@ -280,29 +293,24 @@ class Trainer:
 
     @torch.no_grad()
     def validate(self) -> dict[str, float]:
-        """Run validation."""
+        """Run validation with mAP computation."""
         if self.val_loader is None:
             return {}
 
-        self.model.eval()
-        total_loss = 0.0
-        num_batches = 0
+        from yolo.eval.evaluator import Evaluator
 
-        for images, targets, _, _ in self.val_loader:
-            images = images.to(self.device, non_blocking=True)
-            targets = targets.to(self.device)
+        # Get num_classes from model
+        num_classes, _, _ = self._get_detect_info()
 
-            outputs = self.model(images)
-            loss, _ = self._compute_loss(outputs, targets)
+        evaluator = Evaluator(
+            model=self.model,
+            dataloader=self.val_loader,
+            num_classes=num_classes,
+            device=self.device,
+        )
 
-            total_loss += loss.item()
-            num_batches += 1
-
-        avg_loss = total_loss / max(num_batches, 1)
-        logger.info(f"Validation loss: {avg_loss:.4f}")
-
-        # TODO: mAP computation
-        return {"val_loss": avg_loss, "map50": 0.0}
+        metrics = evaluator.evaluate()
+        return metrics
 
     def save_checkpoint(self, filename: str) -> None:
         """Save checkpoint."""
