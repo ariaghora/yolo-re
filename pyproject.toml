@@ -20,6 +20,9 @@ dev = [
     "ruff",
     "pyright",
 ]
+modal = [
+    "modal",
+]
 debug = [
     # Deps needed to load reference yolov9 checkpoints (pickled model objects)
     "ipython",
