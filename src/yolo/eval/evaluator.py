@@ -115,27 +115,12 @@ class Evaluator:
             # Transpose to (batch, num_anchors, 4 + num_classes) for NMS
             preds = preds.permute(0, 2, 1).contiguous()
 
-            # Debug: log prediction stats on first batch
-            if batch_idx == 0:
-                boxes = preds[0, :, :4]
-                cls_scores = preds[0, :, 4:]
-                logger.info(f"DEBUG pred boxes range: min={boxes.min():.1f}, max={boxes.max():.1f}")
-                min_s, max_s = cls_scores.min(), cls_scores.max()
-                logger.info(f"DEBUG pred cls scores: min={min_s:.4f}, max={max_s:.4f}")
-                logger.info(f"DEBUG cls scores > 0.001: {(cls_scores > 0.001).sum().item()}")
-                logger.info(f"DEBUG cls scores > 0.1: {(cls_scores > 0.1).sum().item()}")
-                logger.info(f"DEBUG cls scores > 0.25: {(cls_scores > 0.25).sum().item()}")
-
             # Apply NMS
             detections = non_max_suppression(
                 preds,
                 conf_thres=self.conf_thres,
                 iou_thres=self.iou_thres,
             )
-
-            # Debug: log detection counts on first batch
-            if batch_idx == 0:
-                logger.info(f"DEBUG detections per image: {[len(d) for d in detections]}")
 
             # Process each image in batch
             for i in range(batch_size):
@@ -168,21 +153,6 @@ class Evaluator:
                     gt_xyxy[:, 1] = gt_xywh[:, 1] - gt_xywh[:, 3] / 2
                     gt_xyxy[:, 2] = gt_xywh[:, 0] + gt_xywh[:, 2] / 2
                     gt_xyxy[:, 3] = gt_xywh[:, 1] + gt_xywh[:, 3] / 2
-
-                    # Debug: log GT info and best IoU on first image
-                    if batch_idx == 0 and i == 0:
-                        logger.info(f"DEBUG GT boxes: {len(gt_xyxy)}")
-                        logger.info(f"DEBUG GT classes: {gt_cls.tolist()[:5]}...")
-                        logger.info(f"DEBUG GT box[0] xyxy: {gt_xyxy[0].tolist()}")
-                        if len(det) > 0:
-                            logger.info(f"DEBUG pred box[0] xyxy: {det[0, :4].tolist()}")
-                            conf, cls = det[0, 4], int(det[0, 5])
-                            logger.info(f"DEBUG pred box[0] conf/cls: {conf:.4f}, {cls}")
-                            # Compute best IoU between any pred and any GT
-                            from yolo.eval.metrics import box_iou
-                            ious = box_iou(det[:, :4].cpu(), gt_xyxy)
-                            best_iou = ious.max().item()
-                            logger.info(f"DEBUG best pred-GT IoU: {best_iou:.4f}")
 
                     all_gt_boxes.append(gt_xyxy)
                     all_gt_classes.append(gt_cls)

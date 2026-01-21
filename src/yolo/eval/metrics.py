@@ -137,9 +137,6 @@ def compute_map(
             tp = np.zeros(len(cls_preds))
             fp = np.zeros(len(cls_preds))
 
-            debug_tp_count = 0
-            debug_fp_count = 0
-
             for pred_idx, (img_id, score, pred_box) in enumerate(cls_preds):
                 # Get GTs for this image
                 gt_mask = gt_classes[img_id] == cls_id
@@ -147,7 +144,6 @@ def compute_map(
 
                 if len(img_gt_boxes) == 0:
                     fp[pred_idx] = 1
-                    debug_fp_count += 1
                     continue
 
                 # Compute IoU with all GTs
@@ -157,27 +153,8 @@ def compute_map(
                 if best_iou >= iou_thresh and not matched[img_id][best_gt]:
                     tp[pred_idx] = 1
                     matched[img_id][best_gt] = True
-                    debug_tp_count += 1
                 else:
                     fp[pred_idx] = 1
-                    debug_fp_count += 1
-
-            # Debug: log TP/FP for key classes at IoU 0.5
-            if iou_thresh == 0.5 and cls_id in [45, 49, 50] and num_gt > 0:
-                import logging
-                logger = logging.getLogger(__name__)
-                # Count images with GT for this class
-                imgs_with_gt = sum(
-                    1 for img_id in range(num_images)
-                    if len(gt_classes[img_id]) > 0 and (gt_classes[img_id] == cls_id).any()
-                )
-                # Count images with preds for this class
-                imgs_with_pred = len(set(p[0] for p in cls_preds))
-                logger.info(
-                    f"DEBUG mAP cls {cls_id} @0.5: {len(cls_preds)} preds on {imgs_with_pred} "
-                    f"imgs, {num_gt} GTs on {imgs_with_gt} imgs, TP={debug_tp_count}, "
-                    f"FP={debug_fp_count}"
-                )
 
             # Compute precision/recall
             tp_cumsum = np.cumsum(tp)
