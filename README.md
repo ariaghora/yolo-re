@@ -2,7 +2,7 @@
 
 A YOLO implementation you can actually read.
 
-Research code shouldn't be production code. This project takes working YOLO implementations and rewrites them with type annotations, typed configs, clear boundaries, and readable structure. Users can replace any component, but shouldn't have to. Out of the box, this thing trains.
+Research code shouldn't be production code. This project takes working YOLO implementations and rewrites them with type annotations, typed configs, clear boundaries, and readable structure. Models are standard `nn.Module`. Loss is decoupled from the model. Users can use the built-in `Trainer` or write their own training loop. Out of the box, this thing trains.
 
 Does this have equal feature parity? Maybe no.
 Will this reproduce the reference result fully? I don't know. Maybe? Training from pretrained checkpoint on COCO128 dataset reduces losses and increases mAPs. Somehow the model learns.
