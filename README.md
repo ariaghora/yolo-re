@@ -1,8 +1,11 @@
 # YOLO, Reimplemented
 
-A clean YOLO implementation you can actually read.
+A YOLO implementation you can actually read.
 
 Research code shouldn't be production code. This project takes working YOLO implementations and rewrites them with type annotations, typed configs, clear boundaries, and readable structure. Users can replace any component, but shouldn't have to. Out of the box, this thing trains.
+
+Does this have equal feature parity? Maybe no.
+Will this reproduce the reference result fully? I don't know. Maybe? Training from pretrained checkpoint on COCO128 dataset reduces losses and increases mAPs. Somehow the model learns.
 
 > **Note:** Currently based on [WongKinYiu/yolov9](https://github.com/WongKinYiu/yolov9). Future versions may incorporate other YOLO variants.
 
