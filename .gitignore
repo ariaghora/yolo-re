@@ -23,6 +23,7 @@ build/
 
 # Project-specific
 _reference/
+data/
 weights/
 *.pt
 

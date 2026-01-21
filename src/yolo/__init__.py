@@ -4,6 +4,7 @@ from yolo.data.config import DataConfig
 from yolo.model.model import YOLO
 from yolo.train.config import TrainConfig
 from yolo.train.trainer import Trainer
+from yolo.utils.device import get_device
 
 __version__ = "0.1.0"
 
@@ -12,4 +13,5 @@ __all__ = [
     "DataConfig",
     "TrainConfig",
     "Trainer",
+    "get_device",
 ]

@@ -18,6 +18,7 @@ from yolo.loss.tal import LossConfig, TALoss
 from yolo.model.model import YOLO
 from yolo.train.config import TrainConfig
 from yolo.train.scheduler import WarmupCosineScheduler
+from yolo.utils.device import get_device
 
 if TYPE_CHECKING:
     import torch.nn as nn
@@ -81,9 +82,16 @@ class Trainer:
 
         self.config = config
         self.data_config = data
-        self.device = torch.device(config.device)
+        self.device = get_device(config.device)
         self.output_dir = Path(config.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Configure logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s | %(message)s",
+            datefmt="%H:%M:%S",
+        )
 
         # Model
         self.model = model
@@ -100,6 +108,7 @@ class Trainer:
                 strides=strides,
                 config=LossConfig(),
             )
+        self.loss_fn.to(self.device)
 
         # Optimizer
         if optimizer is not None:
@@ -144,6 +153,7 @@ class Trainer:
         self.global_step = 0
         self.best_fitness = 0.0
 
+        logger.info(f"Device: {self.device}")
         logger.info(f"Model: {self._count_params():,} parameters")
         logger.info(f"Training: {config.epochs} epochs, batch {data.batch_size}")
 

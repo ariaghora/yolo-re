@@ -34,7 +34,7 @@ class TrainConfig:
     save_period: int = -1  # -1 means only best/last
 
     # Device
-    device: str = "cuda"
+    device: str = "auto"  # auto, cuda, mps, cpu
     amp: bool = True
 
     # Logging

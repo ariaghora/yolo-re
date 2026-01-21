@@ -315,5 +315,6 @@ class TALoss(nn.Module):
     def _bbox_decode(self, anchor_points: Tensor, pred_dist: Tensor, dtype: torch.dtype) -> Tensor:
         """Decode predicted distributions to bounding boxes."""
         b, a, c = pred_dist.shape
-        pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.to(dtype))
+        proj = self.proj.to(device=pred_dist.device, dtype=dtype)
+        pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(proj)
         return dist2bbox(pred_dist, anchor_points, xywh=False)
